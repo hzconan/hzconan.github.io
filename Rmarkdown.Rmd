@@ -1,0 +1,157 @@
+**Practical Machine Learning Project**
+--------------------------
+
+**Load R Package and data**
+```{r}
+library(lattice)
+library(ggplot2)
+library(caret)
+library(randomForest)
+library(rpart)
+mytraining<-read.csv('training.csv')  #import training set
+mytesting<-read.csv('testing.csv') #import testing set
+```
+
+```{r}
+#set seed so that results are reproducible.
+set.seed(888)
+```
+
+
+**Data Slicing**
+sample training set by k-fold cross validation
+```{r}
+mydata<-createFolds(y=mytraining$classe,k=4,list=TRUE,returnTrain=TRUE)  
+#Note the first fold pattern is applied below, later another three folds will be used in turns to evaluate the 'out of sample' error.
+training<-mytraining[mydata$Fold1,]  #subtraining set sampled from training set
+testing<-mytraining[-mydata$Fold1,]  #subtesting set sampled from training set
+```
+```{r}
+#Note that the additional column 'row.names' is generated during data slicing procedure. It may be removed to avoid any further possible mistakes. 
+row.names(training)<-NULL 
+row.names(testing)<-NULL
+```
+**Variable Filtering**
+Remove variables that are relatively irrelevant to the outcome we try to predict. By that, modelling/training algorithm running time may be reduced, as well as undesired interference of non-sense variables to final predictions.
+
+```{r}
+#remove variables which have little variability e.g. Some variables are always true/same.
+nzv<-nearZeroVar(training)
+nzv
+```
+```{r}
+training <- training[, -nzv]
+dim(training)
+```
+```{r}
+#remove missing values: in a certain column, if over 60% of rows are 'NA's, remove the column(i.e. the variable)
+nr<-0.6*nrow(training)
+nc<-ncol(training)
+vector=c()
+for (i in 1:nc){
+    if (sum(is.na(training[,i]))>nr){ 
+        vector=c(vector,i)
+    }
+}
+training<-training[,-vector]
+```
+Then remove variables by hand:
+```{r}
+# Remove 'X' variable since the order of data does not seem to matter much in this case, and it may interfere predictions if we make it a predictor.
+training<-training[,-1] 
+```
+```{r}
+#Remove 'cvtd_timestamp', since it indicates order as well in some sense. More essentially, it is a factor variable and will inevitably lead to failure of Randomforest modelfit predictions(an error will always occur if type of predictors between training and test set are inconsistent, especially factor)
+training<-training[,!(names(training)%in%c('cvtd_timestamp'))]
+dim(training)
+```
+Then we do the same variable filtering to the test set sampled from the training set:
+```{r}
+nzv<-nearZeroVar(testing)
+testing <- testing[, -nzv]
+nr<-0.6*nrow(testing)
+nc<-ncol(testing)
+vector=c()
+for (i in 1:nc){
+    if (sum(is.na(testing[,i]))>nr){
+        vector=c(vector,i)
+    }
+}
+testing<-testing[,-vector]
+
+testing<-testing[,-1]
+testing<-testing[,!(names(testing)%in%c('cvtd_timestamp'))]
+dim(testing)
+```
+
+**Randomforest Model fitting and test prediction**
+```{r}
+#Fit a randomforest model 
+modelfit <- randomForest(classe~.,data = training) #takes about only 50 seconds
+# modelfit<-train(classe~.,data=training,method='rf') takes much more time to run!
+modelfit
+```
+```{r}
+varImpPlot(modelfit) #check variable importance as measured by Random Forest.
+```
+```{r}
+predictions<-predict(modelfit,newdata=testing)
+confusionMatrix(predictions,testing$classe) #where we can see accuracy of 0.9994, which is quite optimal.
+```
+By repeating the procedure using another three folds of cross validation, accuracies are 0.9994,0.999,0.9986,0.9978 respectively. Then the expected 'out of sample' error calculated to be 1/4*((1-0.9994)+(1-0.999)+(1-0.9986)+(1-0.9978))=0.0013, which can be omitted.
+
+**rpart Model fitting and test prediction**
+```{r}
+modelfitB<-rpart(classe~.,data=training) #takes about 3 seconds
+#modelfitB<-train(classe~.,data=training,method='rpart') takes much more time to run!
+```
+```{r}
+plot(modelfitB,uniform=TRUE,main='Classification Tree')
+text(modelfitB,use.n=TRUE,all=TRUE,cex=0.7)
+```
+```{r}
+predictionsB<-predict(modelfitB,newdata=testing,type='class')
+confusionMatrix(predictionsB,testing$classe) #where accuracy of 0.8174 can be seen. 
+```
+By repeating the procedure using another three folds of cross validation, accuracies are 0.8174,0.8283,0.8444,0.8257 respectively. Then the expected 'out of sample' error calculated to be 1/4*((1-0.8174)+(1-0.8283)+(1-0.8444)+(1-0.8257))=0.17105, which is more than 100 times than that of randomforest.
+
+**Real Prediction by randomforest**
+```{r}
+#Randomforest model will be used to predict real testing set due to optimal accuracy.
+```
+```{r}
+#Do similar variable filtering to the real testing set:
+nzv<-nearZeroVar(mytesting)
+mytesting <- mytesting[, -nzv]
+mytesting<-mytesting[,-1]
+mytesting<-mytesting[,!(names(mytesting)%in%c('cvtd_timestamp'))]
+dim(mytesting)
+```
+```{r}
+predictions<-predict(modelfit,newdata=mytesting) #In this case, the modelfit uses the 1st fold of the training set. 
+predictions
+```
+**Submission**
+```{r}
+answers<-as.character(predictions)
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(answers)
+```
+
+**Comment**
+```{r}
+# 1.Use of other 3 folds yields the same result due to fairly high accuracy of randomforest modelling.
+# The results are always: BABAA-EDBAA-BCBAE-EABBB.
+# 2.Instead of setting 'cv' to trControl as an argument of train function, it is much faster to do cross validation 'by hand'. The main reason would be: By experiment, the running time of train function is much greater!
+# Recall:
+# modelfit<-randomForest(classe~.,data = training)  takes about only 50 seconds
+# modelfit<-train(classe~.,data=training,method='rf') takes much more time to run, let alone specifying trControl!
+```
+
+
